@@ -379,3 +379,141 @@ proc unsafeGet*[T](self: Option[T]): lent T {.inline.}=
   ## Generally, using the `get proc <#get,Option[T]>`_ is preferred.
   assert self.isSome
   result = self.val
+
+template withValue*[T](source: Option[T]; varname, ifExists, ifAbsent: untyped) =
+  ## Reads a value from an Option, assigns it to a variable, and calls `ifExists` when it is `some`.
+  ## If the value is `none`, it calls `ifAbsent`.
+  runnableExamples:
+    some("abc").withValue(foo):
+      assert foo == "abc"
+    do:
+      assert false
+
+    var absentCalled: bool
+    none(int).withValue(foo):
+      assert false
+    do:
+      absentCalled = true
+    assert absentCalled
+
+  let local = source
+  if local.isSome:
+    let varname {.inject, used.} = unsafeGet(local)
+    ifExists
+  else:
+    ifAbsent
+
+template withValue*[T](source: Option[T]; varname, ifExists: untyped) =
+  ## Reads a value from an Option, assigns it to a variable, and calls `ifExists` when it is `some`.
+  runnableExamples:
+    some("abc").withValue(foo):
+      assert foo == "abc"
+
+    none(int).withValue(foo):
+      assert false
+
+  source.withValue(varname, ifExists):
+    discard
+
+template mapIt*[T](value: Option[T], action: untyped): untyped =
+  ## Applies an action to the value of the `Option`, if it has one.
+  runnableExamples:
+    assert some(42).mapIt(it * 2).mapIt($it) == some("84")
+    assert none(int).mapIt(it * 2).mapIt($it) == none(string)
+
+  block:
+    type InnerType = typeof(
+      block:
+        var it {.inject, used.}: typeof(value.get())
+        action
+    )
+
+    var outcome: Option[InnerType]
+    value.withValue(it):
+      outcome = some(action)
+    outcome
+
+template flatMapIt*[T](value: Option[T], action: untyped): untyped =
+  ## Executes an action on the value of the `Option`, where that action can also return an `Option`.
+  runnableExamples:
+    assert some(42).flatMapIt(some($it)) == some("42")
+    assert some(42).flatMapIt(none(string)) == none(string)
+    assert none(int).flatMapIt(some($it)) == none(string)
+    assert none(int).flatMapIt(none(string)) == none(string)
+
+  block:
+    type InnerType = typeof(
+      block:
+        var it {.inject, used.}: typeof(value.get())
+        action.get()
+    )
+
+    var outcome: Option[InnerType]
+    value.withValue(it):
+      outcome = action
+    outcome
+
+template filterIt*[T](value: Option[T], action: untyped): Option[T] =
+  ## Tests the value of the `Option` with a predicate, returning a `none` if it fails.
+  runnableExamples:
+    assert some(42).filterIt(it > 0) == some(42)
+    assert none(int).filterIt(it > 0) == none(int)
+    assert some(-11).filterIt(it > 0) == none(int)
+
+  block:
+    let local = value
+    var outcome: Option[T]
+    local.withValue(it):
+      if action:
+        outcome = local
+    outcome
+
+template applyIt*[T](value: Option[T], action: untyped) =
+  ## Executes a code block if the `Option` is `some`, assigning the value to a variable named `it`
+  runnableExamples:
+    var value: string
+    some("foo").applyIt:
+      value = it
+    assert value == "foo"
+
+    none(string).applyIt:
+      assert false
+
+  value.withValue(it):
+    action
+
+template valueOr*[T](value: Option[T], otherwise: untyped): T =
+  ## Returns the value in an option if it is set. Otherwise, executes a code block. This is
+  ## useful for executing side effects when the option is empty.
+  runnableExamples:
+    let a = some("foo").valueOr:
+      assert false
+    assert a == "foo"
+
+    let b = none(string).valueOr:
+      "bar"
+    assert b == "bar"
+
+  block:
+    var outcome: T
+    value.withValue(it):
+      outcome = it
+    do:
+      when typeof(otherwise) is T:
+        outcome = otherwise
+      else:
+        otherwise
+    outcome
+
+template `or`*[T](a, b: Option[T]): Option[T] =
+  ## Returns the value of the `Option` if it has one, otherwise returns the other `Option`.
+  runnableExamples:
+    assert((some(42) or some(9999)) == some(42))
+    assert((none(int) or some(9999)) == some(9999))
+    assert((none(int) or none(int)) == none(int))
+  block:
+    let local = a
+    if local.isSome:
+      local
+    else:
+      b

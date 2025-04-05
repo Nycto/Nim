@@ -28,6 +28,13 @@ template disableJsVm(body) =
   else:
     body
 
+proc buildOnce[T](value: T): proc(): T =
+  var called = false
+  return proc(): T =
+    doAssert(not called, "Expression should only be executed once")
+    called = true
+    return value
+
 proc main() =
   type
     Foo = ref object
@@ -196,6 +203,58 @@ proc main() =
         let x = none(cstring)
         doAssert x.isNone
         doAssert $x == "none(cstring)"
+
+    # withValue should only evaluate the expression once
+    block:
+      let someValue = buildOnce(some(42))
+      someValue().withValue(value):
+        doAssert(value == 42)
+      do:
+        doAssert false
+
+    # withValue should only evaluate the expression once
+    block:
+      let someValue = buildOnce(some(42))
+      someValue().withValue(value):
+        doAssert(value == 42)
+
+    # mapIt should only evalute its expression once
+    block:
+      let someValue = buildOnce(some(42))
+      doAssert someValue().mapIt($it) == some("42")
+
+    # flatMapIt should only evalute its expression once
+    block:
+      let someValue = buildOnce(some(42))
+      doAssert someValue().flatMapIt(some($it)) == some("42")
+
+    # filterIt should only evaluate its expression once
+    block:
+      let someValue = buildOnce(some(42))
+      var outcome: int
+      someValue().applyIt:
+        outcome = it
+      doAssert outcome == 42
+
+    # valueOr should only evaluate its expression once
+    block:
+      let a = buildOnce(some(42))
+      doAssert a().valueOr(0) == 42
+
+      let b = buildOnce(none(int))
+      doAssert b().valueOr(0) == 0
+
+      let c = buildOnce(some(42))
+      discard c().valueOr:
+        doAssert false
+
+    # or should only evaluate its expression once
+    block:
+      let a = buildOnce(some(42))
+      doAssert a().or(some(0)) == some(42)
+
+      let b = buildOnce(some(42))
+      doAssert none(int).or(b()) == some(42)
 
 static: main()
 main()
